@@ -8,4 +8,5 @@ An obsidian plugin for folders containing timestamped notes. You can:
 
 Example link structure:
 
-<span style="display: block;text-align: left;">←[[2022-09-01 at 21ː13]]</span> <span style="display: block;text-align: right;">[[2022-09-12 at 20ː01]]→</span>
+<span style="display: block;text-align: left;">←[[2022-09-01 at 21ː13]]
+<br></span> <span style="display: block;text-align: right;">[[2022-09-12 at 20ː01]]→</span>
