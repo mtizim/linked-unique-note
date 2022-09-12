@@ -1,89 +1,234 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import moment from "moment";
+import {
+	App,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TFile,
+	TFolder,
+} from "obsidian";
+import * as path from "path";
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface LinkedUniqueNoteSettings {
+	dateFormat: string;
+	headerFormat: string;
+	// I'm too lazy to change this to a proper setting
+	template: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+const DEFAULT_SETTINGS: LinkedUniqueNoteSettings = {
+	dateFormat: "YYYY-MM-DD \\at HHːmm",
+	headerFormat:
+		'<span style="display: block;text-align: left;">←{prev}</span> <span style="display: block;text-align: right;">{next}→</span>\n\n',
+	template: "#zettelkasten \n\n",
+};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class LinkedUniqueNote extends Plugin {
+	settings: LinkedUniqueNoteSettings;
+
+	async jumpToLast(folder: TFolder) {
+		const last = folder.children
+			.filter<TFile>((v): v is TFile => v instanceof TFile)
+			.map((file) => {
+				const t: [moment.Moment, TFile] = [
+					moment(file.name, this.settings.dateFormat),
+					file,
+				];
+				return t;
+			})
+			.filter((v) => v[0].isValid())
+			.sort((a, b) => a[0].valueOf() - b[0].valueOf())
+			.last();
+		if (last) {
+			await this.app.workspace.getLeaf().openFile(last[1]);
+		}
+	}
+
+	async newUniqueNote(folder: TFolder) {
+		const newName = moment().format(this.settings.dateFormat);
+		const prev_ = folder.children
+			.filter<TFile>((v): v is TFile => v instanceof TFile)
+			.map((file) => {
+				const t: [moment.Moment, TFile] = [
+					moment(file.name, this.settings.dateFormat),
+					file,
+				];
+				return t;
+			})
+			.filter((v) => v[0].isValid())
+			.sort((a, b) => a[0].valueOf() - b[0].valueOf())
+			.last();
+		const prevHandle = prev_ === undefined ? undefined : prev_[1];
+		const prevName = prevHandle?.name ?? newName;
+		const nextName = newName;
+		const adapter = this.app.vault.adapter;
+
+		const newPath = path.join(folder.path, newName + ".md");
+		if (await adapter.exists(newPath)) {
+			new Notice(`File ${newPath} already exists`);
+		}
+
+		const header = this.settings.headerFormat
+			.replace(
+				new RegExp("\\{prev\\}", "gi"),
+				`[[${prevName.replace(".md", "")}]]`
+			)
+			.replace(new RegExp("\\{next\\}", "gi"), `[[${nextName}]]`);
+		const data = this.settings.template + header;
+		const newFile = await this.app.vault.create(newPath, data);
+
+		await this.app.workspace.getLeaf().openFile(newFile);
+
+		// update previous note
+		if (!prevHandle) return;
+		const text = (await adapter.read(prevHandle.path)).replace(
+			prevHandle.name.replace(".md", ""),
+			newName
+		);
+		const stat = await adapter.stat(prevHandle.path);
+		const writeOptions = {
+			ctime: stat?.ctime,
+			mtime: stat?.mtime,
+		};
+
+		await adapter.write(prevHandle.path, text, writeOptions);
+	}
+
+	async conformFolder(folder: TFolder) {
+		const children = folder.children
+			.filter<TFile>((v): v is TFile => v instanceof TFile)
+			.map((file) => {
+				const t: [moment.Moment, TFile] = [
+					moment(file.name, this.settings.dateFormat),
+					file,
+				];
+				return t;
+			})
+			.filter((v) => v[0].isValid())
+			.sort((a, b) => a[0].valueOf() - b[0].valueOf());
+
+		let prev = children[0];
+		let nextIdx = 1;
+
+		for (const child of children) {
+			const next = children[nextIdx];
+
+			const prevHandle = prev[1];
+			const nextHandle = next[1];
+			const prevName = prevHandle.name;
+			const nextName = nextHandle.name;
+			const adapter = this.app.vault.adapter;
+
+			const header = this.settings.headerFormat
+				.replace(
+					new RegExp("\\{prev\\}", "gi"),
+					`[[${prevName.replace(".md", "")}]]`
+				)
+				.replace(
+					new RegExp("\\{next\\}", "gi"),
+					`[[${nextName.replace(".md", "")}]]`
+				);
+			const data = this.settings.template + header;
+
+			const childPath = child[1].path;
+			// update previous note
+			const text = (await adapter.read(childPath)).replace(
+				/#zettelkasten(.|\n)*span>/,
+				data
+			);
+			const stat = await adapter.stat(childPath);
+			const writeOptions = {
+				ctime: stat?.ctime,
+				mtime: stat?.mtime,
+			};
+
+			await adapter.write(childPath, text, writeOptions);
+
+			prev = child;
+			nextIdx += 1;
+			if (nextIdx >= children.length) {
+				nextIdx = children.length - 1;
+			}
+		}
+	}
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+		this.registerEvent(
+			app.workspace.on("file-menu", (menu, file, source, leaf) => {
+				if (file instanceof TFolder) {
+					menu.addItem((item) => {
+						item.setTitle("New unique note")
+							// .setIcon(kanbanIcon)
+							.onClick(() => this.newUniqueNote(file));
+					});
+					return;
 				}
-			}
-		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+				if (file instanceof TFile) {
+					const parent = file.parent;
+					menu.addItem((item) => {
+						item.setTitle("New unique note")
+							// .setIcon(kanbanIcon)
+							.onClick(() => this.newUniqueNote(parent));
+					});
+				}
+			})
+		);
+		this.registerEvent(
+			app.workspace.on("file-menu", (menu, file, source, leaf) => {
+				if (file instanceof TFolder) {
+					menu.addItem((item) => {
+						item.setTitle("Jump to last unique note")
+							// .setIcon(kanbanIcon)
+							.onClick(() => this.jumpToLast(file));
+					});
+					return;
+				}
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+				if (file instanceof TFile) {
+					const parent = file.parent;
+					menu.addItem((item) => {
+						item.setTitle("Jump to last unique note")
+							// .setIcon(kanbanIcon)
+							.onClick(() => this.jumpToLast(parent));
+					});
+				}
+			})
+		);
+		// Vestigial code for my own purposes
+		// Enable if you know what you want, this links *all* files with a proper
+		// name format chronologically
+		// It is NOT idempotent at all
+		// eslint-disable-next-line no-constant-condition
+		if (false) {
+			this.registerEvent(
+				app.workspace.on("file-menu", (menu, file, source, leaf) => {
+					if (file instanceof TFolder) {
+						menu.addItem((item) => {
+							item.setTitle(
+								"Conform folder to linked unique note"
+							).onClick(() => this.conformFolder(file));
+						});
+						return;
+					}
+				})
+			);
+		}
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.addSettingTab(new LinkedUniqueSettingTab(this.app, this));
 	}
 
-	onunload() {
-
-	}
+	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
 	}
 
 	async saveSettings() {
@@ -91,47 +236,44 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class LinkedUniqueSettingTab extends PluginSettingTab {
+	plugin: LinkedUniqueNote;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: LinkedUniqueNote) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
+		containerEl.createEl("h2", { text: "Unique linked note - settings" });
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					console.log('Secret: ' + value);
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+			.setName("Date format")
+			.setDesc("Date format used for ordering your notes")
+			.addText((text) =>
+				text
+					.setPlaceholder("")
+					.setValue(this.plugin.settings.dateFormat)
+					.onChange(async (value) => {
+						this.plugin.settings.dateFormat = value;
+						await this.plugin.saveSettings();
+					})
+			);
+		new Setting(containerEl)
+			.setName("Header format format")
+			.setDesc("Header format used for ordering your notes")
+			.addText((text) =>
+				text
+					.setPlaceholder("")
+					.setValue(this.plugin.settings.headerFormat)
+					.onChange(async (value) => {
+						this.plugin.settings.headerFormat = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 }

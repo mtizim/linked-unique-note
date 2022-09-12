@@ -1,10 +1,10 @@
 {
-	"id": "obsidian-sample-plugin",
-	"name": "Sample Plugin",
+	"id": "linked-unique-note",
+	"name": "Linked unique note",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "This is a sample plugin for Obsidian. This plugin demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"description": "Create an unique timestamped note in a folder and link it to the previous note",
+	"author": "Matthew Zemois",
+	"authorUrl": "github.com/mtizim",
 	"isDesktopOnly": false
 }
